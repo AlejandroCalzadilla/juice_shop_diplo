@@ -43,7 +43,9 @@ pipeline {
                                 -v "\${PWD}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                semgrep scan --config auto --json --output security-reports/semgrep-report.json || \
+                                sh -c "semgrep scan --config auto --json --output security-reports/semgrep-report.json . && \
+                                       echo 'Semgrep terminado. Verificando archivo:' && \
+                                       ls -la security-reports/semgrep-report.json" || \
                                 echo "Semgrep completado con advertencias"
                         """
                         
@@ -53,8 +55,10 @@ pipeline {
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
-                                fs . --timeout 5m --scanners vuln \
-                                --format json --output security-reports/trivy-fs-report.json || \
+                                sh -c "trivy fs . --timeout 5m --scanners vuln \
+                                       --format json --output security-reports/trivy-fs-report.json && \
+                                       echo 'Trivy FS terminado. Verificando archivo:' && \
+                                       ls -la security-reports/trivy-fs-report.json" || \
                                 echo "Trivy FS completado con advertencias"
                         """
                         
@@ -64,10 +68,12 @@ pipeline {
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 -v \${PWD}/security-reports:/reports \
                                 aquasec/trivy:latest \
-                                image --timeout 10m \
-                                --scanners vuln,secret \
-                                --format json --output /reports/trivy-image-report.json \
-                                ${IMAGE_NAME}:${IMAGE_TAG} || \
+                                sh -c "trivy image --timeout 10m \
+                                       --scanners vuln,secret \
+                                       --format json --output /reports/trivy-image-report.json \
+                                       ${IMAGE_NAME}:${IMAGE_TAG} && \
+                                       echo 'Trivy Image terminado. Verificando archivo:' && \
+                                       ls -la /reports/trivy-image-report.json" || \
                                 echo "Trivy Image completado con advertencias"
                         """
                         
@@ -77,15 +83,26 @@ pipeline {
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
-                                --directory . \
-                                --framework dockerfile \
-                                --output json \
-                                --output-file-path security-reports/checkov-report.json || \
+                                sh -c "checkov --directory . \
+                                       --framework dockerfile \
+                                       --output json \
+                                       --output-file-path security-reports/checkov-report.json && \
+                                       echo 'Checkov terminado. Verificando archivo:' && \
+                                       ls -la security-reports/checkov-report.json" || \
                                 echo "Checkov completado con advertencias"
                         """
                         
                         // Verificar que se generaron los reportes
-                        sh "ls -la security-reports/ || echo 'Algunos reportes no se generaron'"
+                        sh """
+                            echo "📊 Estado de reportes generados:"
+                            echo "================================"
+                            ls -la security-reports/ 2>/dev/null || echo "❌ Directorio security-reports no existe"
+                            echo ""
+                            find . -name "*report*" -type f 2>/dev/null || echo "❌ No se encontraron archivos de reporte"
+                            echo ""
+                            echo "📁 Contenido completo del workspace:"
+                            find . -maxdepth 2 -type f | head -20
+                        """
                         
                     } catch (Exception e) {
                         echo "⚠️ Algún scan falló: ${e.getMessage()}"
@@ -134,17 +151,26 @@ pipeline {
                                 --network jenkins_jenkins-network \
                                 -v \${PWD}/zap-reports:/zap/wrk/:rw \
                                 zaproxy/zap-stable:latest \
-                                zap-baseline.py \
+                                sh -c "zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
                                     -d \
                                     -r zap_baseline_report.html \
                                     -J zap_baseline_report.json \
                                     -w zap_baseline_report.md \
-                                    -I || echo "ZAP completado con advertencias"
+                                    -I && \
+                                    echo 'ZAP terminado. Verificando archivos:' && \
+                                    ls -la /zap/wrk/" || echo "ZAP completado con advertencias"
                         """
                         
                         // Verificar que se generaron los reportes
-                        sh "ls -la zap-reports/ || echo 'No se generaron reportes ZAP'"
+                        sh """
+                            echo "🕷️ Estado de reportes ZAP:"
+                            echo "========================="
+                            ls -la zap-reports/ 2>/dev/null || echo "❌ Directorio zap-reports no existe"
+                            echo ""
+                            echo "📁 Archivos encontrados:"
+                            find . -name "*zap*" -o -name "*report*" -type f 2>/dev/null || echo "❌ No se encontraron reportes ZAP"
+                        """
                         
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
@@ -171,8 +197,28 @@ pipeline {
             sh "docker stop juice-shop-running || true"
             sh "docker rm juice-shop-running || true"
             
-            // Archivar los artefactos del workspace
-            archiveArtifacts artifacts: '**/*', fingerprint: true, allowEmptyArchive: true
+            // Mostrar resumen final de todos los archivos generados
+            sh """
+                echo "📋 RESUMEN FINAL DE REPORTES GENERADOS:"
+                echo "======================================"
+                echo ""
+                echo "🔍 Buscando todos los reportes..."
+                find . -name "*.json" -o -name "*.html" -o -name "*.md" | grep -E "(report|zap)" || echo "❌ No se encontraron reportes"
+                echo ""
+                echo "📁 Estructura de directorios:"
+                ls -la security-reports/ 2>/dev/null || echo "❌ security-reports/ no existe"
+                ls -la zap-reports/ 2>/dev/null || echo "❌ zap-reports/ no existe"
+                echo ""
+                echo "📊 Tamaño de archivos de reporte:"
+                find . -name "*report*" -type f -exec ls -lh {} \\; 2>/dev/null || echo "❌ No hay archivos de reporte"
+            """
+            
+            // Archivar específicamente los reportes de seguridad
+            archiveArtifacts artifacts: 'security-reports/**/*', fingerprint: true, allowEmptyArchive: true
+            archiveArtifacts artifacts: 'zap-reports/**/*', fingerprint: true, allowEmptyArchive: true
+            
+            // También archivar algunos archivos importantes del proyecto
+            archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
             
             echo "📄 Artefactos archivados disponibles en la sección 'Artifacts' de este build"
         }
