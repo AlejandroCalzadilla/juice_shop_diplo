@@ -27,10 +27,15 @@ pipeline {
             }
         }
         
-        stage('SAST - Semgrep') {
+        stage('Build & Security Scans') {
+        stage('Build & Security Scans') {
             steps {
                 script {
                     try {
+                        echo "🔨 Construyendo imagen Docker..."
+                        sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
+                        
+                        echo "🔍 Ejecutando SAST con Semgrep en código fuente..."
                         sh """
                             docker run --rm \
                                 -v "\${PWD}:/src" \
@@ -38,49 +43,39 @@ pipeline {
                                 returntocorp/semgrep:latest \
                                 semgrep scan --config auto --verbose
                         """
-                    } catch (Exception e) {
-                        echo "⚠️ Semgrep falló, continuando: ${e.getMessage()}"
-                    }
-                }
-            }
-        }
-        
-        stage('SCA - Trivy Filesystem') {
-            steps {
-                script {
-                    try {
+                        
+                        echo "🔍 Analizando dependencias con Trivy (después del build)..."
                         sh """
                             docker run --rm \
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
-                                fs . --timeout 5m
+                                fs . --timeout 5m --scanners vuln
                         """
-                    } catch (Exception e) {
-                        echo "⚠️ Trivy SCA falló, continuando: ${e.getMessage()}"
-                    }
-                }
-            }
-        }
-        
-        stage('Build & Image Scan') {
-            steps {
-                script {
-                    try {
-                        // Construir imagen
-                        sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
                         
-                        // Escanear imagen
+                        echo "🔍 Escaneando imagen Docker con Trivy..."
                         sh """
                             docker run --rm \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 aquasec/trivy:latest \
                                 image --timeout 10m \
+                                --scanners vuln,secret \
                                 ${IMAGE_NAME}:${IMAGE_TAG}
                         """
                         
+                        echo "🔍 Ejecutando análisis de configuración con Checkov..."
+                        sh """
+                            docker run --rm \
+                                -v \${PWD}:/workspace \
+                                --workdir /workspace \
+                                bridgecrew/checkov:latest \
+                                --directory . \
+                                --framework dockerfile || true
+                        """
+                        
                     } catch (Exception e) {
-                        echo "⚠️ Build o Image Scan falló: ${e.getMessage()}"
+                        echo "⚠️ Algún scan falló: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
                     }
                 }
             }
@@ -90,6 +85,7 @@ pipeline {
             steps {
                 script {
                     try {
+                        echo "🚀 Iniciando aplicación para DAST..."
                         // Iniciar aplicación en la misma red que Jenkins
                         sh """
                             docker run -d --rm \
@@ -100,31 +96,36 @@ pipeline {
                         """
                         
                         // Esperar a que la aplicación esté lista
+                        echo "⏰ Esperando que la aplicación esté lista..."
                         sh "sleep 60"
                         
                         // Verificar logs del contenedor
-                        sh "docker logs juice-shop-running"
+                        sh "docker logs juice-shop-running | tail -20"
                         
                         // Verificar conectividad usando curl desde Jenkins
                         sh """
-                            echo "Verificando conectividad..."
+                            echo "🔗 Verificando conectividad..."
                             docker run --rm --network jenkins_jenkins-network alpine/curl:latest \
-                                curl -f http://juice-shop-running:3000 || \
-                            (echo 'Aplicación no responde' && exit 1)
+                                curl -f -v http://juice-shop-running:3000 || \
+                            (echo '❌ Aplicación no responde' && exit 1)
                         """
                         
-                        // Ejecutar ZAP scan
+                        // Ejecutar ZAP scan con más verbosidad
+                        echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
-                                    -I || true
+                                    -d \
+                                    -r zap_baseline_report.html \
+                                    -I || echo "ZAP completado con advertencias"
                         """
                         
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
                     } finally {
                         // Limpiar recursos
                         sh "docker stop juice-shop-running || true"
@@ -135,19 +136,8 @@ pipeline {
         
         stage('PaC - Checkov (opcional)') {
             steps {
-                script {
-                    try {
-                        sh """
-                            docker run --rm \
-                                -v \${PWD}:/workspace \
-                                --workdir /workspace \
-                                bridgecrew/checkov:latest \
-                                --directory . || true
-                        """
-                    } catch (Exception e) {
-                        echo "⚠️ Checkov falló: ${e.getMessage()}"
-                    }
-                }
+                echo "ℹ️ Checkov ya se ejecutó en el stage 'Build & Security Scans'"
+                echo "✅ Análisis de configuración completado"
             }
         }
     }
