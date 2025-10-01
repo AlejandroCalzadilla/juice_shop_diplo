@@ -104,37 +104,34 @@ pipeline {
 
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
                         
-                        // Crear directorio temporal con permisos correctos
-                        sh "mkdir -p zap-reports && chmod 777 zap-reports"
-                        
-                        // Crear archivo zap.yaml para evitar problemas de permisos
+                        // Usar directorio /tmp que siempre tiene permisos correctos
                         sh """
-                            echo "parameters:" > zap-reports/zap.yaml
-                            chmod 666 zap-reports/zap.yaml
-                        """
-                        
-                        sh """
+                            # Crear directorio temporal único
+                            ZAP_DIR="/tmp/zap-\${BUILD_NUMBER}-\${RANDOM}"
+                            mkdir -p \${ZAP_DIR}
+                            chmod 777 \${ZAP_DIR}
+                            
+                            # Ejecutar ZAP con el directorio temporal
                             docker run --rm \
                                 --network jenkins_jenkins-network \
-                                -v "${WORKSPACE_DIR}/zap-reports:/zap/wrk" \
+                                -v "\${ZAP_DIR}:/zap/wrk" \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
                                     -J /zap/wrk/zap-baseline-report.json \
                                     -I || true
-                        """
-
-                        // Copiar el reporte al directorio principal y ajustar permisos
-                        sh """
-                            if [ -f zap-reports/zap-baseline-report.json ]; then
-                                cp zap-reports/zap-baseline-report.json ./
-                                sudo chown jenkins:jenkins zap-baseline-report.json || true
-                                sudo chmod 644 zap-baseline-report.json || true
+                            
+                            # Copiar el reporte al workspace
+                            if [ -f "\${ZAP_DIR}/zap-baseline-report.json" ]; then
+                                cp "\${ZAP_DIR}/zap-baseline-report.json" "${WORKSPACE_DIR}/"
                                 echo "📄 Reporte ZAP copiado exitosamente"
                             else
-                                echo "⚠️ Reporte ZAP no encontrado en zap-reports/"
-                                ls -la zap-reports/ || true
+                                echo "⚠️ Reporte ZAP no encontrado"
+                                ls -la "\${ZAP_DIR}/" || true
                             fi
+                            
+                            # Limpiar directorio temporal
+                            rm -rf "\${ZAP_DIR}" || true
                         """
 
                         echo "✅ Verificando reportes ZAP generados..."
@@ -157,9 +154,6 @@ pipeline {
                 // Limpiar contenedores
                 sh "docker stop juice-shop-running || true"
                 sh "docker rm juice-shop-running || true"
-
-                // Limpiar directorio temporal de ZAP
-                sh "rm -rf zap-reports || true"
 
                 // Corregir permisos de todos los archivos de reporte
                 echo "🔧 Corrigiendo permisos de archivos..."
