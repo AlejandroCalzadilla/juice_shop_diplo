@@ -114,8 +114,13 @@ pipeline {
                                     -I || true
                         """
 
-                        // Cambiar permisos del archivo para que Jenkins pueda acceder
-                        sh "sudo chmod 644 zap-baseline-report.json || true"
+                        // Cambiar permisos usando un contenedor alpine
+                        sh """
+                            docker run --rm \
+                                -v "${WORKSPACE_DIR}:/workspace" \
+                                alpine:latest \
+                                sh -c "chmod 666 /workspace/zap-baseline-report.json || true"
+                        """
 
                         echo "✅ Verificando reportes ZAP generados..."
                         sh "ls -lh zap-baseline-report.json || echo 'ZAP report not found'"

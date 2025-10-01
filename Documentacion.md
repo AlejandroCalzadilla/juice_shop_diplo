@@ -14,7 +14,19 @@ proyecto tipo laboratorio con vulnerabilidades de la
 | Cliente      | Repudiation             | El usuario puede negar acciones si no existen registros adecuados.           | Abierto | Media     | Implementar logs y auditoría de acciones.                         |
 
 
+## Angular Frontend
 
+| Componente   | Tipo (STRIDE)           | Descripción                                                                 | Estado  | Prioridad | Mitigación                                                        |
+|--------------|-------------------------|-----------------------------------------------------------------------------|---------|-----------|-------------------------------------------------------------------|
+| Angular      | Spoofing                | Manipulación de tokens OAuth2 o sesiones en el lado cliente.                | Abierto | Alta      | Validación de tokens en servidor, refresh tokens seguros.         |
+| Angular      | Tampering               | Modificación de código JavaScript o datos en el navegador.                  | Abierto | Alta      | Code integrity checks, CSP headers, validación server-side.       |
+| Angular      | Repudiation             | Acciones del frontend no registradas adecuadamente.                         | Abierto | Media     | Logging de eventos críticos del frontend.                         |
+| Angular      | Information Disclosure  | Exposición de datos sensibles en código JavaScript o localStorage.          | Abierto | Crítica   | Cifrado de datos sensibles, no almacenar secretos en frontend.    |
+| Angular      | Denial of Service       | Ataques que consumen recursos del navegador o sobrecarga de requests.       | Abierto | Media     | Rate limiting, timeout en requests, optimización de recursos.     |
+| Angular      | Elevation of Privilege  | XSS permite ejecutar código con privilegios del usuario autenticado.        | Abierto | Crítica   | Sanitización de entradas, CSP, Angular security features.         |
+
+
+## Servidor de Aplicaciones
 
 | Componente   | Tipo (STRIDE)           | Descripción                                                                 | Estado  | Prioridad | Mitigación                                                        |
 |--------------|-------------------------|-----------------------------------------------------------------------------|---------|-----------|-------------------------------------------------------------------|
