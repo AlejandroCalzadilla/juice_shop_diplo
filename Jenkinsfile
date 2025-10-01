@@ -3,8 +3,23 @@ pipeline {
     
     environment {
         IMAGE_NAME = "juice-shop"
-        IMAGE_TAG = "latest"
-        WORKSPACE_DIR = "${WORKSPACE}"
+        IMAGE_TAG = "l                        echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
+                        sh """
+                            docker run --rm \
+                                --network jenkins_jenkins-network \
+                                -v "${WORKSPACE_DIR}:/zap/wrk" \
+                                zaproxy/zap-stable:latest \
+                                zap-baseline.py \
+                                    -t http://juice-shop-running:3000 \
+                                    -J zap-baseline-report.json \
+                                    -I || true
+                        """
+
+                        echo "📝 Corrigiendo permisos del reporte ZAP..."
+                        sh "chmod 644 zap-baseline-report.json || chown jenkins:jenkins zap-baseline-report.json || true"
+
+                        echo "✅ Verificando reportes ZAP generados..."
+                        sh "ls -lh zap-baseline-report.json" WORKSPACE_DIR = "${WORKSPACE}"
     }
     
     stages {
