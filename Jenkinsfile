@@ -31,8 +31,12 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Crear directorios para reportes
-                        sh "mkdir -p security-reports"
+                        // Limpiar reportes antiguos y crear directorios con permisos correctos
+                        sh """
+                            rm -rf reports/ security-reports/ zap-reports/ 2>/dev/null || true
+                            mkdir -p security-reports
+                            chmod 777 security-reports
+                        """
                         
                         echo "🔨 Construyendo imagen Docker..."
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
@@ -40,31 +44,36 @@ pipeline {
                         echo "🔍 Ejecutando SAST con Semgrep en código fuente..."
                         sh """
                             docker run --rm \
+                                --user \$(id -u):\$(id -g) \
                                 -v "\${PWD}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
                                 sh -c "semgrep scan --config auto --json --output security-reports/semgrep-report.json . && \
                                        echo 'Semgrep terminado. Verificando archivo:' && \
-                                       ls -la security-reports/semgrep-report.json" || \
+                                       ls -la security-reports/semgrep-report.json && \
+                                       wc -c security-reports/semgrep-report.json" || \
                                 echo "Semgrep completado con advertencias"
                         """
                         
                         echo "🔍 Analizando dependencias con Trivy (después del build)..."
                         sh """
                             docker run --rm \
+                                --user \$(id -u):\$(id -g) \
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
                                 sh -c "trivy fs . --timeout 5m --scanners vuln \
                                        --format json --output security-reports/trivy-fs-report.json && \
                                        echo 'Trivy FS terminado. Verificando archivo:' && \
-                                       ls -la security-reports/trivy-fs-report.json" || \
+                                       ls -la security-reports/trivy-fs-report.json && \
+                                       wc -c security-reports/trivy-fs-report.json" || \
                                 echo "Trivy FS completado con advertencias"
                         """
                         
                         echo "🔍 Escaneando imagen Docker con Trivy..."
                         sh """
                             docker run --rm \
+                                --user \$(id -u):\$(id -g) \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 -v \${PWD}/security-reports:/reports \
                                 aquasec/trivy:latest \
@@ -73,13 +82,15 @@ pipeline {
                                        --format json --output /reports/trivy-image-report.json \
                                        ${IMAGE_NAME}:${IMAGE_TAG} && \
                                        echo 'Trivy Image terminado. Verificando archivo:' && \
-                                       ls -la /reports/trivy-image-report.json" || \
+                                       ls -la /reports/trivy-image-report.json && \
+                                       wc -c /reports/trivy-image-report.json" || \
                                 echo "Trivy Image completado con advertencias"
                         """
                         
                         echo "🔍 Ejecutando análisis de configuración con Checkov..."
                         sh """
                             docker run --rm \
+                                --user \$(id -u):\$(id -g) \
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
@@ -88,7 +99,8 @@ pipeline {
                                        --output json \
                                        --output-file-path security-reports/checkov-report.json && \
                                        echo 'Checkov terminado. Verificando archivo:' && \
-                                       ls -la security-reports/checkov-report.json" || \
+                                       ls -la security-reports/checkov-report.json && \
+                                       wc -c security-reports/checkov-report.json" || \
                                 echo "Checkov completado con advertencias"
                         """
                         
@@ -116,8 +128,11 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Crear directorio para reportes ZAP
-                        sh "mkdir -p zap-reports"
+                        // Crear directorio para reportes ZAP con permisos correctos
+                        sh """
+                            mkdir -p zap-reports
+                            chmod 777 zap-reports
+                        """
                         
                         echo "🚀 Iniciando aplicación para DAST..."
                         // Iniciar aplicación en la misma red que Jenkins
@@ -144,10 +159,11 @@ pipeline {
                             (echo '❌ Aplicación no responde' && exit 1)
                         """
                         
-                        // Ejecutar ZAP scan con reportes montados
+                        // Ejecutar ZAP scan con permisos arreglados
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
                         sh """
                             docker run --rm \
+                                --user \$(id -u):\$(id -g) \
                                 --network jenkins_jenkins-network \
                                 -v \${PWD}/zap-reports:/zap/wrk/:rw \
                                 zaproxy/zap-stable:latest \
@@ -159,7 +175,8 @@ pipeline {
                                     -w zap_baseline_report.md \
                                     -I && \
                                     echo 'ZAP terminado. Verificando archivos:' && \
-                                    ls -la /zap/wrk/" || echo "ZAP completado con advertencias"
+                                    ls -la /zap/wrk/ && \
+                                    wc -c /zap/wrk/*.html /zap/wrk/*.json 2>/dev/null || echo 'Algunos archivos no se generaron'" || echo "ZAP completado con advertencias"
                         """
                         
                         // Verificar que se generaron los reportes
@@ -213,12 +230,34 @@ pipeline {
                 find . -name "*report*" -type f -exec ls -lh {} \\; 2>/dev/null || echo "❌ No hay archivos de reporte"
             """
             
-            // Archivar específicamente los reportes de seguridad
-            archiveArtifacts artifacts: 'security-reports/**/*', fingerprint: true, allowEmptyArchive: true
-            archiveArtifacts artifacts: 'zap-reports/**/*', fingerprint: true, allowEmptyArchive: true
-            
-            // También archivar algunos archivos importantes del proyecto
-            archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
+            // Archivar específicamente los reportes de seguridad (usando patrones más simples)
+            script {
+                try {
+                    // Verificar si existen archivos antes de archivar
+                    def hasSecurityReports = sh(script: "ls security-reports/*.json 2>/dev/null", returnStatus: true) == 0
+                    def hasZapReports = sh(script: "ls zap-reports/* 2>/dev/null", returnStatus: true) == 0
+                    
+                    if (hasSecurityReports) {
+                        archiveArtifacts artifacts: 'security-reports/*', fingerprint: true, allowEmptyArchive: true
+                        echo "✅ Reportes de seguridad archivados"
+                    } else {
+                        echo "❌ No se encontraron reportes de seguridad para archivar"
+                    }
+                    
+                    if (hasZapReports) {
+                        archiveArtifacts artifacts: 'zap-reports/*', fingerprint: true, allowEmptyArchive: true
+                        echo "✅ Reportes ZAP archivados"
+                    } else {
+                        echo "❌ No se encontraron reportes ZAP para archivar"
+                    }
+                    
+                    // Archivar archivos importantes del proyecto
+                    archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
+                    
+                } catch (Exception e) {
+                    echo "⚠️ Error archivando algunos artefactos: ${e.getMessage()}"
+                }
+            }
             
             echo "📄 Artefactos archivados disponibles en la sección 'Artifacts' de este build"
         }
