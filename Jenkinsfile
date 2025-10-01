@@ -104,34 +104,42 @@ pipeline {
 
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
                         
-                        // Usar directorio /tmp que siempre tiene permisos correctos
+                        // Crear directorio con el usuario correcto y permisos 777
                         sh """
-                            # Crear directorio temporal único
-                            ZAP_DIR="/tmp/zap-\${BUILD_NUMBER}-\${RANDOM}"
-                            mkdir -p \${ZAP_DIR}
-                            chmod 777 \${ZAP_DIR}
+                            mkdir -p zap-reports
+                            chmod 777 zap-reports
                             
-                            # Ejecutar ZAP con el directorio temporal
+                            # Crear archivo placeholder con permisos completos
+                            touch zap-reports/zap-baseline-report.json
+                            chmod 666 zap-reports/zap-baseline-report.json
+                            
+                            # Crear zap.yaml también
+                            echo "parameters:" > zap-reports/zap.yaml
+                            chmod 666 zap-reports/zap.yaml
+                        """
+                        
+                        sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
-                                -v "\${ZAP_DIR}:/zap/wrk" \
+                                -v "${WORKSPACE_DIR}/zap-reports:/zap/wrk" \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
                                     -J /zap/wrk/zap-baseline-report.json \
                                     -I || true
-                            
-                            # Copiar el reporte al workspace
-                            if [ -f "\${ZAP_DIR}/zap-baseline-report.json" ]; then
-                                cp "\${ZAP_DIR}/zap-baseline-report.json" "${WORKSPACE_DIR}/"
+                        """
+
+                        // Copiar el reporte al directorio principal
+                        sh """
+                            if [ -s zap-reports/zap-baseline-report.json ]; then
+                                cp zap-reports/zap-baseline-report.json ./
+                                sudo chown jenkins:jenkins zap-baseline-report.json || true
+                                sudo chmod 644 zap-baseline-report.json || true
                                 echo "📄 Reporte ZAP copiado exitosamente"
                             else
-                                echo "⚠️ Reporte ZAP no encontrado"
-                                ls -la "\${ZAP_DIR}/" || true
+                                echo "⚠️ Reporte ZAP vacío o no encontrado"
+                                ls -la zap-reports/ || true
                             fi
-                            
-                            # Limpiar directorio temporal
-                            rm -rf "\${ZAP_DIR}" || true
                         """
 
                         echo "✅ Verificando reportes ZAP generados..."
@@ -155,6 +163,9 @@ pipeline {
                 sh "docker stop juice-shop-running || true"
                 sh "docker rm juice-shop-running || true"
 
+                // Limpiar directorio temporal de ZAP
+                sh "rm -rf zap-reports || true"
+
                 // Corregir permisos de todos los archivos de reporte
                 echo "🔧 Corrigiendo permisos de archivos..."
                 sh "sudo chown jenkins:jenkins *.json || true"
@@ -163,7 +174,6 @@ pipeline {
                 echo "📋 RESUMEN DE REPORTES GENERADOS:"
                 echo "=================================="
                 sh "ls -lh *.json || echo 'No hay reportes JSON'"
-                sh "ls -lh zap-baseline-report.json || echo 'No hay reportes ZAP'"
 
                 // Archivar todos los reportes JSON y ZAP
                 archiveArtifacts artifacts: '*.json', fingerprint: true, allowEmptyArchive: true
