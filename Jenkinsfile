@@ -28,7 +28,6 @@ pipeline {
         }
         
         stage('Build & Security Scans') {
-        stage('Build & Security Scans') {
             steps {
                 script {
                     try {
@@ -164,5 +163,4 @@ pipeline {
         }
     }
 }
- 
-}
+
