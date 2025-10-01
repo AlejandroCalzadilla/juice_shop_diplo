@@ -48,8 +48,7 @@ pipeline {
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 -v "${WORKSPACE_DIR}:/workspace" \
                                 aquasec/trivy:latest \
-                                trivy image --timeout 10m \
-                                --format json --output trivy-image-report.json \
+                                trivy image --timeout 10m -f json -o trivy-image-report.json \
                                 ${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
 
@@ -59,8 +58,7 @@ pipeline {
                                 -v "${WORKSPACE_DIR}:/workspace" \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
-                                checkov --directory . --framework dockerfile \
-                                --output json --output-file-path . \
+                                checkov --directory . --framework dockerfile -o json --output-file-path . \
                                 --soft-fail || true
                         """
 
