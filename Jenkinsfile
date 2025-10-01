@@ -4,25 +4,32 @@ pipeline {
     environment {
         IMAGE_NAME = "juice-shop"
         IMAGE_TAG = "latest"
+        WORKSPACE_DIR = "${WORKSPACE}"
     }
     
     stages {
         stage('Preparación') {
             steps {
                 script {
-                    // Limpiar contenedores anteriores si existen
+                    // Limpiar contenedores anteriores
                     sh "docker stop juice-shop-running || true"
                     sh "docker rm juice-shop-running || true"
                     
                     // Limpiar imágenes anteriores
                     sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
+                    
+                    // Crear directorios de reportes con permisos correctos
+                    sh """
+                        rm -rf security-reports/ zap-reports/ 2>/dev/null || true
+                        mkdir -p security-reports zap-reports
+                        chmod -R 777 security-reports zap-reports
+                    """
                 }
             }
         }
         
         stage('Checkout') {
             steps {
-                // Cambiar por tu repositorio
                 git branch: 'main', url: 'https://github.com/juice-shop/juice-shop.git'
             }
         }
@@ -31,89 +38,64 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Limpiar reportes antiguos y crear directorios con permisos correctos
-                        sh """
-                            rm -rf reports/ security-reports/ zap-reports/ 2>/dev/null || true
-                            mkdir -p security-reports
-                            chmod 777 security-reports
-                        """
-                        
                         echo "🔨 Construyendo imagen Docker..."
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
                         
-                        echo "🔍 Ejecutando SAST con Semgrep en código fuente..."
+                        echo "🔍 Ejecutando SAST con Semgrep..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
-                                -v "\${PWD}:/src" \
+                                -v "${WORKSPACE_DIR}:/src:ro" \
+                                -v "${WORKSPACE_DIR}/security-reports:/reports:rw" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                sh -c "semgrep scan --config auto --json --output security-reports/semgrep-report.json . && \
-                                       echo 'Semgrep terminado. Verificando archivo:' && \
-                                       ls -la security-reports/semgrep-report.json && \
-                                       wc -c security-reports/semgrep-report.json" || \
-                                echo "Semgrep completado con advertencias"
+                                semgrep scan --config auto --json --output /reports/semgrep-report.json . || true
                         """
                         
-                        echo "🔍 Analizando dependencias con Trivy (después del build)..."
+                        echo "🔍 Analizando dependencias con Trivy (filesystem)..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
-                                -v \${PWD}:/workspace \
+                                -v "${WORKSPACE_DIR}:/workspace:ro" \
+                                -v "${WORKSPACE_DIR}/security-reports:/reports:rw" \
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
-                                sh -c "trivy fs . --timeout 5m --scanners vuln \
-                                       --format json --output security-reports/trivy-fs-report.json && \
-                                       echo 'Trivy FS terminado. Verificando archivo:' && \
-                                       ls -la security-reports/trivy-fs-report.json && \
-                                       wc -c security-reports/trivy-fs-report.json" || \
-                                echo "Trivy FS completado con advertencias"
+                                trivy fs . --timeout 5m --scanners vuln \
+                                    --format json --output /reports/trivy-fs-report.json || true
                         """
                         
                         echo "🔍 Escaneando imagen Docker con Trivy..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
-                                -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v \${PWD}/security-reports:/reports \
+                                -v /var/run/docker.sock:/var/run/docker.sock:ro \
+                                -v "${WORKSPACE_DIR}/security-reports:/reports:rw" \
                                 aquasec/trivy:latest \
-                                sh -c "trivy image --timeout 10m \
-                                       --scanners vuln,secret \
-                                       --format json --output /reports/trivy-image-report.json \
-                                       ${IMAGE_NAME}:${IMAGE_TAG} && \
-                                       echo 'Trivy Image terminado. Verificando archivo:' && \
-                                       ls -la /reports/trivy-image-report.json && \
-                                       wc -c /reports/trivy-image-report.json" || \
-                                echo "Trivy Image completado con advertencias"
+                                trivy image --timeout 10m --scanners vuln,secret \
+                                    --format json --output /reports/trivy-image-report.json \
+                                    ${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
                         
                         echo "🔍 Ejecutando análisis de configuración con Checkov..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
-                                -v \${PWD}:/workspace \
+                                -v "${WORKSPACE_DIR}:/workspace:ro" \
+                                -v "${WORKSPACE_DIR}/security-reports:/reports:rw" \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
-                                sh -c "checkov --directory . \
-                                       --framework dockerfile \
-                                       --output json \
-                                       --output-file-path security-reports/checkov-report.json && \
-                                       echo 'Checkov terminado. Verificando archivo:' && \
-                                       ls -la security-reports/checkov-report.json && \
-                                       wc -c security-reports/checkov-report.json" || \
-                                echo "Checkov completado con advertencias"
+                                checkov --directory . --framework dockerfile \
+                                    --output json --output-file-path /reports \
+                                    --soft-fail || true
                         """
                         
-                        // Verificar que se generaron los reportes
+                        // Renombrar archivo de Checkov si tiene nombre diferente
                         sh """
-                            echo "📊 Estado de reportes generados:"
-                            echo "================================"
-                            ls -la security-reports/ 2>/dev/null || echo "❌ Directorio security-reports no existe"
-                            echo ""
-                            find . -name "*report*" -type f 2>/dev/null || echo "❌ No se encontraron archivos de reporte"
-                            echo ""
-                            echo "📁 Contenido completo del workspace:"
-                            find . -maxdepth 2 -type f | head -20
+                            if [ -f security-reports/results_json.json ]; then
+                                mv security-reports/results_json.json security-reports/checkov-report.json
+                            fi
+                        """
+                        
+                        echo "✅ Verificando reportes generados..."
+                        sh """
+                            echo "📊 Reportes en security-reports/:"
+                            ls -lh security-reports/
                         """
                         
                     } catch (Exception e) {
@@ -125,134 +107,126 @@ pipeline {
         }
         
         stage('DAST - OWASP ZAP') {
-  steps {
-    script {
-      try {
-        sh """
-          mkdir -p zap-reports
-          chmod 777 zap-reports
-        """
-
-        echo "🚀 Iniciando aplicación para DAST..."
-        sh """
-          docker run -d --rm \
-            --name juice-shop-running \
-            --network jenkins_jenkins-network \
-            -p 3000:3000 \
-            ${IMAGE_NAME}:${IMAGE_TAG}
-        """
-
-        echo "⏰ Esperando que la aplicación esté lista..."
-        sh "sleep 60"
-        sh "docker logs juice-shop-running | tail -20"
-
-        echo "🔗 Verificando conectividad..."
-        sh """
-          docker run --rm --network jenkins_jenkins-network alpine/curl:latest \
-            curl -f -v http://juice-shop-running:3000
-        """
-
-        echo "🕷️ Ejecutando OWASP ZAP baseline scan (con volumen montado)..."
-        // ✅ Escribimos en /zap/wrk y montamos zap-reports ahí
-        sh """
-          docker run --rm \
-            --network jenkins_jenkins-network \
-            -u \$(id -u):\$(id -g) \
-            -v "\${PWD}/zap-reports:/zap/wrk" \
-            zaproxy/zap-stable:latest \
-            zap-baseline.py \
-              -t http://juice-shop-running:3000 \
-              -d \
-              -r zap_baseline_report.html \
-              -J zap_baseline_report.json \
-              -w zap_baseline_report.md \
-              -I
-        """
-
-        echo "✅ Archivos ZAP generados:"
-        sh "ls -la zap-reports && wc -c zap-reports/* || true"
-
-      } catch (e) {
-        echo "⚠️ DAST falló: ${e.getMessage()}"
-        currentBuild.result = 'UNSTABLE'
-      } finally {
-        sh "docker stop juice-shop-running || true"
-      }
-    }
-  }
-}
-
-        
-        stage('PaC - Checkov (opcional)') {
             steps {
-                echo "ℹ️ Checkov ya se ejecutó en el stage 'Build & Security Scans'"
-                echo "✅ Análisis de configuración completado"
+                script {
+                    try {
+                        echo "🚀 Iniciando aplicación para DAST..."
+                        sh """
+                            docker run -d --rm \
+                                --name juice-shop-running \
+                                --network jenkins_jenkins-network \
+                                -p 3000:3000 \
+                                ${IMAGE_NAME}:${IMAGE_TAG}
+                        """
+                        
+                        echo "⏰ Esperando que la aplicación esté lista..."
+                        sh "sleep 60"
+                        
+                        echo "🔗 Verificando conectividad..."
+                        sh """
+                            docker run --rm --network jenkins_jenkins-network alpine/curl:latest \
+                                curl -f -v http://juice-shop-running:3000 || true
+                        """
+                        
+                        echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
+                        sh """
+                            docker run --rm \
+                                --network jenkins_jenkins-network \
+                                -v "${WORKSPACE_DIR}/zap-reports:/zap/wrk:rw" \
+                                zaproxy/zap-stable:latest \
+                                zap-baseline.py \
+                                    -t http://juice-shop-running:3000 \
+                                    -r zap-baseline-report.html \
+                                    -J zap-baseline-report.json \
+                                    -w zap-baseline-report.md \
+                                    -I || true
+                        """
+                        
+                        echo "✅ Verificando reportes ZAP generados..."
+                        sh """
+                            echo "📊 Reportes en zap-reports/:"
+                            ls -lh zap-reports/
+                        """
+                        
+                    } catch (Exception e) {
+                        echo "⚠️ DAST falló: ${e.getMessage()}"
+                        currentBuild.result = 'UNSTABLE'
+                    } finally {
+                        sh "docker stop juice-shop-running || true"
+                    }
+                }
             }
         }
     }
     
     post {
         always {
-            // Limpiar cualquier contenedor que pueda haber quedado
-            sh "docker stop juice-shop-running || true"
-            sh "docker rm juice-shop-running || true"
-            
-            // Mostrar resumen final de todos los archivos generados
-            sh """
-                echo "📋 RESUMEN FINAL DE REPORTES GENERADOS:"
-                echo "======================================"
-                echo ""
-                echo "🔍 Buscando todos los reportes..."
-                find . -name "*.json" -o -name "*.html" -o -name "*.md" | grep -E "(report|zap)" || echo "❌ No se encontraron reportes"
-                echo ""
-                echo "📁 Estructura de directorios:"
-                ls -la security-reports/ 2>/dev/null || echo "❌ security-reports/ no existe"
-                ls -la zap-reports/ 2>/dev/null || echo "❌ zap-reports/ no existe"
-                echo ""
-                echo "📊 Tamaño de archivos de reporte:"
-                find . -name "*report*" -type f -exec ls -lh {} \\; 2>/dev/null || echo "❌ No hay archivos de reporte"
-            """
-            
-            // Archivar específicamente los reportes de seguridad (usando patrones más simples)
             script {
+                // Limpiar contenedores
+                sh "docker stop juice-shop-running || true"
+                sh "docker rm juice-shop-running || true"
+                
+                echo "📋 RESUMEN DE REPORTES GENERADOS:"
+                echo "=================================="
+                
+                // Verificar y mostrar reportes de seguridad
+                sh """
+                    echo ""
+                    echo "🔒 Reportes de Seguridad (SAST/SCA):"
+                    ls -lh security-reports/ 2>/dev/null || echo "❌ No hay reportes de seguridad"
+                """
+                
+                // Verificar y mostrar reportes ZAP
+                sh """
+                    echo ""
+                    echo "🕷️ Reportes DAST (ZAP):"
+                    ls -lh zap-reports/ 2>/dev/null || echo "❌ No hay reportes ZAP"
+                """
+                
+                // Archivar SOLO los reportes de seguridad
                 try {
-                    // Verificar si existen archivos antes de archivar
-                    def hasSecurityReports = sh(script: "ls security-reports/*.json 2>/dev/null", returnStatus: true) == 0
-                    def hasZapReports = sh(script: "ls zap-reports/* 2>/dev/null", returnStatus: true) == 0
+                    def securityFiles = sh(script: "ls security-reports/ 2>/dev/null | wc -l", returnStdout: true).trim()
+                    def zapFiles = sh(script: "ls zap-reports/ 2>/dev/null | wc -l", returnStdout: true).trim()
                     
-                    if (hasSecurityReports) {
-                        archiveArtifacts artifacts: 'security-reports/*', fingerprint: true, allowEmptyArchive: true
-                        echo "✅ Reportes de seguridad archivados"
+                    if (securityFiles.toInteger() > 0) {
+                        archiveArtifacts artifacts: 'security-reports/**/*', 
+                                       fingerprint: true, 
+                                       allowEmptyArchive: false
+                        echo "✅ ${securityFiles} reportes de seguridad archivados"
                     } else {
-                        echo "❌ No se encontraron reportes de seguridad para archivar"
+                        echo "⚠️ No se encontraron reportes de seguridad para archivar"
                     }
                     
-                    if (hasZapReports) {
-                        archiveArtifacts artifacts: 'zap-reports/*', fingerprint: true, allowEmptyArchive: true
-                        echo "✅ Reportes ZAP archivados"
+                    if (zapFiles.toInteger() > 0) {
+                        archiveArtifacts artifacts: 'zap-reports/**/*', 
+                                       fingerprint: true, 
+                                       allowEmptyArchive: false
+                        echo "✅ ${zapFiles} reportes ZAP archivados"
                     } else {
-                        echo "❌ No se encontraron reportes ZAP para archivar"
+                        echo "⚠️ No se encontraron reportes ZAP para archivar"
                     }
                     
-                    // Archivar archivos importantes del proyecto
-                    archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
+                    echo ""
+                    echo "📦 Total de artefactos generados: ${securityFiles.toInteger() + zapFiles.toInteger()}"
                     
                 } catch (Exception e) {
-                    echo "⚠️ Error archivando algunos artefactos: ${e.getMessage()}"
+                    echo "⚠️ Error archivando artefactos: ${e.getMessage()}"
                 }
             }
-            
-            echo "📄 Artefactos archivados disponibles en la sección 'Artifacts' de este build"
         }
         
         success {
             echo "🎉 Pipeline completado exitosamente!"
-            echo "📄 Artefactos disponibles en la sección 'Artifacts' de este build"
+            echo "📄 Todos los reportes están disponibles en la sección 'Artifacts'"
         }
         
         failure {
             echo "❌ Pipeline falló. Revisa los logs para más detalles."
         }
+        
+        unstable {
+            echo "⚠️ Pipeline completado con advertencias."
+            echo "📄 Los reportes disponibles están en la sección 'Artifacts'"
+        }
     }
 }
-
