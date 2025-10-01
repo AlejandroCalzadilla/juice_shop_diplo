@@ -103,10 +103,14 @@ pipeline {
                         """
 
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
+                        
+                        // Crear directorio temporal con permisos correctos
+                        sh "mkdir -p zap-reports && chmod 777 zap-reports"
+                        
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
-                                -v "${WORKSPACE_DIR}:/zap/wrk" \
+                                -v "${WORKSPACE_DIR}/zap-reports:/zap/wrk" \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
@@ -114,9 +118,18 @@ pipeline {
                                     -I || true
                         """
 
-                        // Cambiar permisos del archivo usando sudo
-                        sh "sudo chown jenkins:jenkins zap-baseline-report.json || true"
-                        sh "sudo chmod 644 zap-baseline-report.json || true"
+                        // Copiar el reporte al directorio principal y ajustar permisos
+                        sh """
+                            if [ -f zap-reports/zap-baseline-report.json ]; then
+                                cp zap-reports/zap-baseline-report.json ./
+                                sudo chown jenkins:jenkins zap-baseline-report.json || true
+                                sudo chmod 644 zap-baseline-report.json || true
+                                echo "📄 Reporte ZAP copiado exitosamente"
+                            else
+                                echo "⚠️ Reporte ZAP no encontrado en zap-reports/"
+                                ls -la zap-reports/ || true
+                            fi
+                        """
 
                         echo "✅ Verificando reportes ZAP generados..."
                         sh "ls -lh zap-baseline-report.json || echo 'ZAP report not found'"
@@ -138,6 +151,9 @@ pipeline {
                 // Limpiar contenedores
                 sh "docker stop juice-shop-running || true"
                 sh "docker rm juice-shop-running || true"
+
+                // Limpiar directorio temporal de ZAP
+                sh "rm -rf zap-reports || true"
 
                 // Corregir permisos de todos los archivos de reporte
                 echo "🔧 Corrigiendo permisos de archivos..."
