@@ -110,7 +110,7 @@ pipeline {
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
-                                    -J zap-baseline-report.json \
+                                    -J /zap/wrk/zap-baseline-report.json \
                                     -I || true
                         """
 
