@@ -161,32 +161,58 @@ pipeline {
                         
                         // Ejecutar ZAP scan con permisos arreglados
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
+                        
+                        // Estrategia alternativa: usar un contenedor temporal para copiar archivos
                         sh """
-                            docker run --rm \
-                                --user \$(id -u):\$(id -g) \
+                            # Ejecutar ZAP y mantener el contenedor temporalmente
+                            docker run -d --name zap-temp \
                                 --network jenkins_jenkins-network \
-                                -v \${PWD}/zap-reports:/zap/wrk/:rw \
                                 zaproxy/zap-stable:latest \
                                 sh -c "zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
                                     -d \
-                                    -r zap_baseline_report.html \
-                                    -J zap_baseline_report.json \
-                                    -w zap_baseline_report.md \
-                                    -I && \
-                                    echo 'ZAP terminado. Verificando archivos:' && \
-                                    ls -la /zap/wrk/ && \
-                                    wc -c /zap/wrk/*.html /zap/wrk/*.json 2>/dev/null || echo 'Algunos archivos no se generaron'" || echo "ZAP completado con advertencias"
+                                    -r /tmp/zap_baseline_report.html \
+                                    -J /tmp/zap_baseline_report.json \
+                                    -w /tmp/zap_baseline_report.md \
+                                    -I; sleep 30" || echo "ZAP iniciado"
+                            
+                            # Esperar a que termine ZAP
+                            sleep 90
+                            
+                            # Verificar logs de ZAP
+                            echo "📋 Logs de ZAP:"
+                            docker logs zap-temp | tail -20
+                            
+                            # Copiar archivos del contenedor al workspace
+                            echo "� Copiando archivos de ZAP al workspace:"
+                            docker cp zap-temp:/tmp/zap_baseline_report.html zap-reports/zap_baseline_report.html 2>/dev/null || echo "HTML no copiado"
+                            docker cp zap-temp:/tmp/zap_baseline_report.json zap-reports/zap_baseline_report.json 2>/dev/null || echo "JSON no copiado"
+                            docker cp zap-temp:/tmp/zap_baseline_report.md zap-reports/zap_baseline_report.md 2>/dev/null || echo "MD no copiado"
+                            
+                            # Limpiar contenedor temporal
+                            docker stop zap-temp 2>/dev/null || true
+                            docker rm zap-temp 2>/dev/null || true
+                            
+                            # Verificar archivos copiados
+                            echo "✅ Archivos copiados al workspace:"
+                            ls -la zap-reports/
                         """
                         
-                        // Verificar que se generaron los reportes
+                        // Verificar que se generaron los reportes ZAP
                         sh """
-                            echo "🕷️ Estado de reportes ZAP:"
-                            echo "========================="
-                            ls -la zap-reports/ 2>/dev/null || echo "❌ Directorio zap-reports no existe"
-                            echo ""
-                            echo "📁 Archivos encontrados:"
-                            find . -name "*zap*" -o -name "*report*" -type f 2>/dev/null || echo "❌ No se encontraron reportes ZAP"
+                            echo "🕷️ Estado final de reportes ZAP:"
+                            echo "================================"
+                            if [ -d "zap-reports" ] && [ "\$(ls -A zap-reports 2>/dev/null)" ]; then
+                                echo "✅ Directorio zap-reports contiene archivos:"
+                                ls -la zap-reports/
+                                echo ""
+                                echo "� Tamaños de archivos ZAP:"
+                                find zap-reports -name "*.html" -o -name "*.json" -o -name "*.md" | xargs wc -c 2>/dev/null || echo "Archivos no encontrados"
+                            else
+                                echo "❌ Directorio zap-reports está vacío o no existe"
+                                echo "🔍 Búsqueda alternativa de archivos ZAP:"
+                                find . -name "*zap_baseline*" -type f 2>/dev/null || echo "No se encontraron archivos ZAP en el workspace"
+                            fi
                         """
                         
                     } catch (Exception e) {
@@ -195,6 +221,8 @@ pipeline {
                     } finally {
                         // Limpiar recursos
                         sh "docker stop juice-shop-running || true"
+                        sh "docker stop zap-temp || true"
+                        sh "docker rm zap-temp || true"
                     }
                 }
             }
