@@ -114,6 +114,9 @@ pipeline {
                                     -I || true
                         """
 
+                        // Cambiar permisos del archivo para que Jenkins pueda acceder
+                        sh "sudo chmod 644 zap-baseline-report.json || true"
+
                         echo "✅ Verificando reportes ZAP generados..."
                         sh "ls -lh zap-baseline-report.json || echo 'ZAP report not found'"
 
