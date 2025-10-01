@@ -58,8 +58,7 @@ pipeline {
                                 "
                         """
                         // Verificar que el archivo se creó correctamente
-                        sh "ls -la reports/sast-report.json && wc -c reports/sast-report.json"
-                            sh "chmod -R 777 reports/"
+                            sh "ls -la reports/sast-report.json && wc -c reports/sast-report.json"
                     } catch (Exception e) {
                         echo "⚠️ Semgrep falló, continuando: ${e.getMessage()}"
                         sh "echo '{\"error\": \"SAST failed: ${e.getMessage()}\"}' > ${REPORTS_DIR}/sast-report.json"
@@ -83,8 +82,7 @@ pipeline {
                                 --timeout 5m
                         """
                         // Verificar que el archivo se creó correctamente  
-                        sh "ls -la reports/sca-report.json && wc -c reports/sca-report.json"
-                            sh "chmod -R 777 reports/"
+                            sh "ls -la reports/sca-report.json && wc -c reports/sca-report.json"
                     } catch (Exception e) {
                         echo "⚠️ Trivy SCA falló, continuando: ${e.getMessage()}"
                         sh "echo '{\"error\": \"SCA failed: ${e.getMessage()}\"}' > ${REPORTS_DIR}/sca-report.json"
@@ -114,8 +112,7 @@ pipeline {
                                 ${IMAGE_NAME}:${IMAGE_TAG}
                         """
                         // Verificar que el archivo se creó correctamente
-                        sh "ls -la reports/image-report.json && wc -c reports/image-report.json"
-                            sh "chmod -R 777 reports/"
+                            sh "ls -la reports/image-report.json && wc -c reports/image-report.json"
                         
                     } catch (Exception e) {
                         echo "⚠️ Build o Image Scan falló: ${e.getMessage()}"
@@ -177,8 +174,7 @@ pipeline {
                         """
                         
                         // Verificar que el archivo se creó correctamente
-                        sh "ls -la reports/dast-report.json && wc -c reports/dast-report.json || echo 'DAST report not found'"
-                            sh "chmod -R 777 reports/"
+                            sh "ls -la reports/dast-report.json && wc -c reports/dast-report.json || echo 'DAST report not found'"
                         
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
@@ -204,7 +200,6 @@ pipeline {
                                 --output json \
                                 --output-file-path reports/pac-report.json || true
                         """
-                            sh "chmod -R 777 reports/"
                     } catch (Exception e) {
                         echo "⚠️ Checkov falló: ${e.getMessage()}"
                         sh "echo '{\"error\": \"PaC scan failed\"}' > ${REPORTS_DIR}/pac-report.json"
