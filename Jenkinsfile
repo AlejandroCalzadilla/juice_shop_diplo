@@ -114,13 +114,9 @@ pipeline {
                                     -I || true
                         """
 
-                        // Cambiar permisos usando un contenedor alpine
-                        sh """
-                            docker run --rm \
-                                -v "${WORKSPACE_DIR}:/workspace" \
-                                alpine:latest \
-                                sh -c "chmod 666 /workspace/zap-baseline-report.json || true"
-                        """
+                        // Cambiar permisos del archivo usando sudo
+                        sh "sudo chown jenkins:jenkins zap-baseline-report.json || true"
+                        sh "sudo chmod 644 zap-baseline-report.json || true"
 
                         echo "✅ Verificando reportes ZAP generados..."
                         sh "ls -lh zap-baseline-report.json || echo 'ZAP report not found'"
@@ -142,6 +138,11 @@ pipeline {
                 // Limpiar contenedores
                 sh "docker stop juice-shop-running || true"
                 sh "docker rm juice-shop-running || true"
+
+                // Corregir permisos de todos los archivos de reporte
+                echo "🔧 Corrigiendo permisos de archivos..."
+                sh "sudo chown jenkins:jenkins *.json || true"
+                sh "sudo chmod 644 *.json || true"
 
                 echo "📋 RESUMEN DE REPORTES GENERADOS:"
                 echo "=================================="
