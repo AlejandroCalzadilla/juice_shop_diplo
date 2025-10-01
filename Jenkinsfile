@@ -107,6 +107,12 @@ pipeline {
                         // Crear directorio temporal con permisos correctos
                         sh "mkdir -p zap-reports && chmod 777 zap-reports"
                         
+                        // Crear archivo zap.yaml para evitar problemas de permisos
+                        sh """
+                            echo "parameters:" > zap-reports/zap.yaml
+                            chmod 666 zap-reports/zap.yaml
+                        """
+                        
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
