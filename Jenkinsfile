@@ -106,15 +106,16 @@ pipeline {
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
+                                -v "${WORKSPACE_DIR}:/zap/wrk" \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
-                                    -J /dev/stdout \
-                                    -I > zap-baseline-report.json || true
+                                    -J zap-baseline-report.json \
+                                    -I || true
                         """
 
                         echo "✅ Verificando reportes ZAP generados..."
-                        sh "ls -lh zap-baseline-report.json"
+                        sh "ls -lh zap-baseline-report.json || echo 'ZAP report not found'"
 
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
