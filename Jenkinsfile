@@ -42,11 +42,14 @@ pipeline {
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
                                 semgrep scan --config auto --json \
-                                --output reports/sast-report.json
+                                --output reports/sast-report.json \
+                                --verbose
                         """
+                        // Verificar que el archivo se creó correctamente
+                        sh "ls -la reports/sast-report.json && wc -c reports/sast-report.json"
                     } catch (Exception e) {
                         echo "⚠️ Semgrep falló, continuando: ${e.getMessage()}"
-                        sh "echo '{\"error\": \"SAST failed\"}' > ${REPORTS_DIR}/sast-report.json"
+                        sh "echo '{\"error\": \"SAST failed: ${e.getMessage()}\"}' > ${REPORTS_DIR}/sast-report.json"
                     }
                 }
             }
@@ -62,11 +65,14 @@ pipeline {
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
                                 fs . --format json \
-                                --output reports/sca-report.json
+                                --output reports/sca-report.json \
+                                --timeout 5m
                         """
+                        // Verificar que el archivo se creó correctamente  
+                        sh "ls -la reports/sca-report.json && wc -c reports/sca-report.json"
                     } catch (Exception e) {
                         echo "⚠️ Trivy SCA falló, continuando: ${e.getMessage()}"
-                        sh "echo '{\"error\": \"SCA failed\"}' > ${REPORTS_DIR}/sca-report.json"
+                        sh "echo '{\"error\": \"SCA failed: ${e.getMessage()}\"}' > ${REPORTS_DIR}/sca-report.json"
                     }
                 }
             }
@@ -88,12 +94,15 @@ pipeline {
                                 aquasec/trivy:latest \
                                 image --format json \
                                 --output reports/image-report.json \
+                                --timeout 10m \
                                 ${IMAGE_NAME}:${IMAGE_TAG}
                         """
+                        // Verificar que el archivo se creó correctamente
+                        sh "ls -la reports/image-report.json && wc -c reports/image-report.json"
                         
                     } catch (Exception e) {
                         echo "⚠️ Build o Image Scan falló: ${e.getMessage()}"
-                        sh "echo '{\"error\": \"Image scan failed\"}' > ${REPORTS_DIR}/image-report.json"
+                        sh "echo '{\"error\": \"Image scan failed: ${e.getMessage()}\"}' > ${REPORTS_DIR}/image-report.json"
                     }
                 }
             }
@@ -131,11 +140,15 @@ pipeline {
                             docker run --rm \
                                 --network jenkins_jenkins-network \
                                 -v \${PWD}/reports:/zap/wrk/:rw \
-                                owasp/zap2docker-stable \
+                                zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                 -t http://juice-shop-running:3000 \
-                                -J dast-report.json || true
+                                -J dast-report.json \
+                                -I || true
                         """
+                        
+                        // Verificar que el archivo se creó correctamente
+                        sh "ls -la reports/dast-report.json && wc -c reports/dast-report.json || echo 'DAST report not found'"
                         
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
