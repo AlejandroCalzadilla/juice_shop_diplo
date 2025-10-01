@@ -38,6 +38,7 @@ pipeline {
                     try {
                         sh """
                             docker run --rm \
+                                --user root \
                                 -v "\${PWD}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
@@ -61,6 +62,7 @@ pipeline {
                     try {
                         sh """
                             docker run --rm \
+                                --user root \
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
@@ -88,6 +90,7 @@ pipeline {
                         // Escanear imagen con output directo al workspace
                         sh """
                             docker run --rm \
+                                --user root \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
@@ -139,6 +142,7 @@ pipeline {
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
+                                --user root \
                                 -v \${PWD}/reports:/zap/wrk/:rw \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
@@ -185,7 +189,7 @@ pipeline {
     
     post {
         always {
-            // Limpiar contenedores
+            // Limpiar cualquier contenedor que pueda haber quedado
             sh "docker stop juice-shop-running || true"
             sh "docker rm juice-shop-running || true"
             
@@ -197,6 +201,9 @@ pipeline {
             
             // Mostrar tamaño de los reportes para verificar contenido
             sh "find ${REPORTS_DIR} -name '*.json' -exec wc -c {} + || true"
+            
+            // Mostrar contenido de los reportes para debug
+            sh "echo '=== CONTENIDO DE REPORTES ===' && cat ${REPORTS_DIR}/*.json | head -50 || true"
         }
         
         success {
