@@ -31,6 +31,9 @@ pipeline {
             steps {
                 script {
                     try {
+                        // Crear directorios para reportes
+                        sh "mkdir -p security-reports"
+                        
                         echo "🔨 Construyendo imagen Docker..."
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
                         
@@ -40,7 +43,8 @@ pipeline {
                                 -v "\${PWD}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                semgrep scan --config auto --verbose
+                                semgrep scan --config auto --json --output security-reports/semgrep-report.json || \
+                                echo "Semgrep completado con advertencias"
                         """
                         
                         echo "🔍 Analizando dependencias con Trivy (después del build)..."
@@ -49,17 +53,22 @@ pipeline {
                                 -v \${PWD}:/workspace \
                                 --workdir /workspace \
                                 aquasec/trivy:latest \
-                                fs . --timeout 5m --scanners vuln
+                                fs . --timeout 5m --scanners vuln \
+                                --format json --output security-reports/trivy-fs-report.json || \
+                                echo "Trivy FS completado con advertencias"
                         """
                         
                         echo "🔍 Escaneando imagen Docker con Trivy..."
                         sh """
                             docker run --rm \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
+                                -v \${PWD}/security-reports:/reports \
                                 aquasec/trivy:latest \
                                 image --timeout 10m \
                                 --scanners vuln,secret \
-                                ${IMAGE_NAME}:${IMAGE_TAG}
+                                --format json --output /reports/trivy-image-report.json \
+                                ${IMAGE_NAME}:${IMAGE_TAG} || \
+                                echo "Trivy Image completado con advertencias"
                         """
                         
                         echo "🔍 Ejecutando análisis de configuración con Checkov..."
@@ -69,8 +78,14 @@ pipeline {
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
                                 --directory . \
-                                --framework dockerfile || true
+                                --framework dockerfile \
+                                --output json \
+                                --output-file-path security-reports/checkov-report.json || \
+                                echo "Checkov completado con advertencias"
                         """
+                        
+                        // Verificar que se generaron los reportes
+                        sh "ls -la security-reports/ || echo 'Algunos reportes no se generaron'"
                         
                     } catch (Exception e) {
                         echo "⚠️ Algún scan falló: ${e.getMessage()}"
@@ -84,6 +99,9 @@ pipeline {
             steps {
                 script {
                     try {
+                        // Crear directorio para reportes ZAP
+                        sh "mkdir -p zap-reports"
+                        
                         echo "🚀 Iniciando aplicación para DAST..."
                         // Iniciar aplicación en la misma red que Jenkins
                         sh """
@@ -109,18 +127,24 @@ pipeline {
                             (echo '❌ Aplicación no responde' && exit 1)
                         """
                         
-                        // Ejecutar ZAP scan con más verbosidad
+                        // Ejecutar ZAP scan con reportes montados
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
+                                -v \${PWD}/zap-reports:/zap/wrk/:rw \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
                                     -d \
                                     -r zap_baseline_report.html \
+                                    -J zap_baseline_report.json \
+                                    -w zap_baseline_report.md \
                                     -I || echo "ZAP completado con advertencias"
                         """
+                        
+                        // Verificar que se generaron los reportes
+                        sh "ls -la zap-reports/ || echo 'No se generaron reportes ZAP'"
                         
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
