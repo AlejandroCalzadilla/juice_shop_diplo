@@ -106,18 +106,15 @@ pipeline {
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
-                                -v "${WORKSPACE_DIR}:/zap/wrk" \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
-                                    -r zap-baseline-report.html \
-                                    -J zap-baseline-report.json \
-                                    -w zap-baseline-report.md \
-                                    -I || true
+                                    -J /dev/stdout \
+                                    -I > zap-baseline-report.json || true
                         """
 
                         echo "✅ Verificando reportes ZAP generados..."
-                        sh "ls -lh zap-baseline-report.*"
+                        sh "ls -lh zap-baseline-report.json"
 
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
@@ -140,11 +137,10 @@ pipeline {
                 echo "📋 RESUMEN DE REPORTES GENERADOS:"
                 echo "=================================="
                 sh "ls -lh *.json || echo 'No hay reportes JSON'"
-                sh "ls -lh zap-baseline-report.* || echo 'No hay reportes ZAP'"
+                sh "ls -lh zap-baseline-report.json || echo 'No hay reportes ZAP'"
 
                 // Archivar todos los reportes JSON y ZAP
                 archiveArtifacts artifacts: '*.json', fingerprint: true, allowEmptyArchive: true
-                archiveArtifacts artifacts: 'zap-baseline-report.*', fingerprint: true, allowEmptyArchive: true
             }
         }
         success {
