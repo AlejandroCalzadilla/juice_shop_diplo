@@ -39,13 +39,14 @@ pipeline {
                         sh """
                             docker run --rm \
                                 -v "\${PWD}:/src" \
-                                returntocorp/semgrep \
+                                --workdir /src \
+                                returntocorp/semgrep:latest \
                                 semgrep scan --config auto --json \
-                                -o /src/reports/sast-report.json
+                                --output reports/sast-report.json
                         """
                     } catch (Exception e) {
                         echo "⚠️ Semgrep falló, continuando: ${e.getMessage()}"
-                        sh "echo '{}' > ${REPORTS_DIR}/sast-report.json"
+                        sh "echo '{\"error\": \"SAST failed\"}' > ${REPORTS_DIR}/sast-report.json"
                     }
                 }
             }
@@ -57,14 +58,15 @@ pipeline {
                     try {
                         sh """
                             docker run --rm \
-                                -v \${PWD}:/app \
+                                -v \${PWD}:/workspace \
+                                --workdir /workspace \
                                 aquasec/trivy:latest \
-                                fs /app --format json \
-                                --output /app/reports/sca-report.json
+                                fs . --format json \
+                                --output reports/sca-report.json
                         """
                     } catch (Exception e) {
                         echo "⚠️ Trivy SCA falló, continuando: ${e.getMessage()}"
-                        sh "echo '{}' > ${REPORTS_DIR}/sca-report.json"
+                        sh "echo '{\"error\": \"SCA failed\"}' > ${REPORTS_DIR}/sca-report.json"
                     }
                 }
             }
@@ -77,20 +79,21 @@ pipeline {
                         // Construir imagen
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
                         
-                        // Escanear imagen directamente sin usar /tmp
+                        // Escanear imagen con output directo al workspace
                         sh """
                             docker run --rm \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v \${PWD}/reports:/reports \
+                                -v \${PWD}:/workspace \
+                                --workdir /workspace \
                                 aquasec/trivy:latest \
                                 image --format json \
-                                --output /reports/image-report.json \
+                                --output reports/image-report.json \
                                 ${IMAGE_NAME}:${IMAGE_TAG}
                         """
                         
                     } catch (Exception e) {
                         echo "⚠️ Build o Image Scan falló: ${e.getMessage()}"
-                        sh "echo '{}' > ${REPORTS_DIR}/image-report.json"
+                        sh "echo '{\"error\": \"Image scan failed\"}' > ${REPORTS_DIR}/image-report.json"
                     }
                 }
             }
@@ -100,44 +103,45 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Iniciar aplicación en background
+                        // Iniciar aplicación en la misma red que Jenkins
                         sh """
                             docker run -d --rm \
                                 --name juice-shop-running \
+                                --network jenkins_jenkins-network \
                                 -p 3000:3000 \
                                 ${IMAGE_NAME}:${IMAGE_TAG}
                         """
                         
-                        // Esperar más tiempo y verificar logs
-                        sh "sleep 120"
+                        // Esperar a que la aplicación esté lista
+                        sh "sleep 60"
                         
                         // Verificar logs del contenedor
                         sh "docker logs juice-shop-running"
                         
-                        // Verificar que la aplicación responda con mejor diagnóstico
+                        // Verificar conectividad usando curl desde Jenkins
                         sh """
                             echo "Verificando conectividad..."
-                            docker exec jenkins-server curl -f http://localhost:3000 || \
-                            docker exec juice-shop-running curl -f http://localhost:3000 || \
-                            (echo 'Aplicación no responde después de 60s' && exit 1)
+                            docker run --rm --network jenkins_jenkins-network alpine/curl:latest \
+                                curl -f http://juice-shop-running:3000 || \
+                            (echo 'Aplicación no responde' && exit 1)
                         """
                         
-                        // Ejecutar ZAP scan usando la red del contenedor
+                        // Ejecutar ZAP scan en la misma red de Jenkins
                         sh """
                             docker run --rm \
-                                --link juice-shop-running:target \
+                                --network jenkins_jenkins-network \
                                 -v \${PWD}/reports:/zap/wrk/:rw \
                                 owasp/zap2docker-stable \
                                 zap-baseline.py \
-                                -t http://target:3000 \
+                                -t http://juice-shop-running:3000 \
                                 -J dast-report.json || true
                         """
                         
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
-                        sh "echo '{}' > ${REPORTS_DIR}/dast-report.json"
+                        sh "echo '{\"error\": \"DAST failed\"}' > ${REPORTS_DIR}/dast-report.json"
                     } finally {
-                        // Detener contenedor de la aplicación
+                        // Limpiar recursos
                         sh "docker stop juice-shop-running || true"
                     }
                 }
@@ -150,15 +154,16 @@ pipeline {
                     try {
                         sh """
                             docker run --rm \
-                                -v \${PWD}:/project \
-                                bridgecrew/checkov \
-                                --directory /project \
+                                -v \${PWD}:/workspace \
+                                --workdir /workspace \
+                                bridgecrew/checkov:latest \
+                                --directory . \
                                 --output json \
-                                --output-file-path /project/reports/pac-report.json || true
+                                --output-file-path reports/pac-report.json || true
                         """
                     } catch (Exception e) {
                         echo "⚠️ Checkov falló: ${e.getMessage()}"
-                        sh "echo '{}' > ${REPORTS_DIR}/pac-report.json"
+                        sh "echo '{\"error\": \"PaC scan failed\"}' > ${REPORTS_DIR}/pac-report.json"
                     }
                 }
             }
@@ -176,6 +181,9 @@ pipeline {
             
             // Mostrar resumen de archivos generados
             sh "ls -la ${REPORTS_DIR}/ || echo 'No hay reportes'"
+            
+            // Mostrar tamaño de los reportes para verificar contenido
+            sh "find ${REPORTS_DIR} -name '*.json' -exec wc -c {} + || true"
         }
         
         success {
