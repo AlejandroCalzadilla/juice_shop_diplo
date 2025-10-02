@@ -49,7 +49,7 @@ pipeline {
                                 -v "${WORKSPACE_DIR}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                semgrep scan --config auto --json --output semgrep-report.json --force-color --no-git-ignore . || true
+                                semgrep scan --config auto --json --output /src/semgrep-report.json --force-color --no-git-ignore . || true
                         """
 
                         echo "🔍 Escaneando imagen Docker con Trivy..."
@@ -80,7 +80,18 @@ pipeline {
                         """
 
                         echo "✅ Verificando reportes generados..."
-                        sh "ls -lh *.json"
+                        sh """
+                            echo "📊 Archivos JSON generados:"
+                            ls -lh *.json || echo "No hay archivos JSON aún"
+                            
+                            echo "📄 Verificando Semgrep específicamente:"
+                            if [ -f semgrep-report.json ]; then
+                                echo "✅ semgrep-report.json existe ($(wc -c < semgrep-report.json) bytes)"
+                                head -3 semgrep-report.json
+                            else
+                                echo "❌ semgrep-report.json NO existe"
+                            fi
+                        """
 
                     } catch (Exception e) {
                         echo "⚠️ Algún scan falló: ${e.getMessage()}"
