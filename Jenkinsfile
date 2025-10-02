@@ -1,5 +1,8 @@
 pipeline {
     agent any
+    options {
+        skipDefaultCheckout()  // ← Agregar esto
+    }
     
     environment {
         IMAGE_NAME = "juice-shop"
