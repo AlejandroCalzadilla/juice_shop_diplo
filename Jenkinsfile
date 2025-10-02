@@ -26,12 +26,6 @@ pipeline {
                     sh "docker stop juice-shop-running || true"
                     sh "docker rm juice-shop-running || true"
                     sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
-                    
-                    // Crear directorios con permisos correctos
-                    sh """
-                        mkdir -p security-reports
-                        chmod 755 security-reports
-                    """
                 }
             }
         }
@@ -46,63 +40,47 @@ pipeline {
             steps {
                 script {
                     try {
-                        // Obtener UID para usar en contenedores
-                        def userInfo = sh(script: 'id -u', returnStdout: true).trim()
-                        def groupInfo = sh(script: 'id -g', returnStdout: true).trim()
-                        
                         echo "🔨 Construyendo imagen Docker..."
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
 
                         echo "🔍 Ejecutando SAST con Semgrep..."
                         sh """
                             docker run --rm \
-                                --user ${userInfo}:${groupInfo} \
                                 -v "${WORKSPACE_DIR}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                sh -c "semgrep scan --config auto --json --output security-reports/semgrep-report.json . && chmod 644 security-reports/semgrep-report.json" || true
-                            
-                            # Crear reporte vacío si falló
-                            if [ ! -f security-reports/semgrep-report.json ]; then
-                                echo '{"errors":["Semgrep failed"}' > security-reports/semgrep-report.json
-                            fi
+                                semgrep scan --config auto --json --output semgrep-report.json . || true
                         """
 
                         echo "🔍 Escaneando imagen Docker con Trivy..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
-                                -v "${WORKSPACE_DIR}/security-reports:/reports" \
+                                -v "${WORKSPACE_DIR}:/workspace" \
+                                --workdir /workspace \
                                 aquasec/trivy:latest \
-                                sh -c "trivy image --format json --output /reports/trivy-image-report.json ${IMAGE_NAME}:${IMAGE_TAG} && \
-                                       chmod 644 /reports/trivy-image-report.json" || \
-                                echo "Trivy falló, creando reporte vacío" && \
-                                echo '{"errors":["Trivy failed"}' > security-reports/trivy-image-report.json
+                                image --format json ${IMAGE_NAME}:${IMAGE_TAG} > trivy-image-report.json || true
                         """
 
                         echo "🔍 Ejecutando análisis de configuración con Checkov..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
                                 -v "${WORKSPACE_DIR}:/workspace" \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
-                                sh -c "checkov --directory . --framework dockerfile -o json --output-file-path security-reports/checkov-report.json --soft-fail && \
-                                       chmod 644 security-reports/checkov-report.json" || \
-                                echo "Checkov falló, creando reporte vacío" && \
-                                echo '{"errors":["Checkov failed"}' > security-reports/checkov-report.json
+                                --directory . --framework dockerfile -o json --output-file-path . \
+                                --soft-fail || true
+                        """
+
+                        // Renombrar archivo de Checkov si tiene nombre diferente
+                        sh """
+                            if [ -f results_json.json ]; then
+                                mv results_json.json checkov-report.json
+                            fi
                         """
 
                         echo "✅ Verificando reportes generados..."
-                        sh """
-                            echo "📊 Reportes en security-reports/:"
-                            ls -lh security-reports/ || echo "Directorio security-reports vacío"
-                            
-                            echo ""
-                            echo "📈 Tamaños de archivos:"
-                            find security-reports -name "*.json" -exec wc -c {} \\; || echo "No se encontraron archivos JSON"
-                        """
+                        sh "ls -lh *.json"
 
                     } catch (Exception e) {
                         echo "⚠️ Algún scan falló: ${e.getMessage()}"
@@ -183,15 +161,20 @@ pipeline {
                 echo "============================="
                 sh """
                     echo "🔍 Todos los archivos JSON generados:"
-                    find security-reports -name "*.json" -exec ls -lh {} \\; || echo "No hay reportes"
+                    ls -lh *.json || echo "No hay reportes"
                     
                     echo ""
                     echo "📊 Contenido de reportes (primeras líneas):"
-                    find security-reports -name "*.json" -exec sh -c 'echo "=== \$1 ==="; head -3 "\$1"' _ {} \\; || echo "No se pueden leer reportes"
+                    for file in *.json; do
+                        if [ -f "\$file" ]; then
+                            echo "=== \$file ==="
+                            head -3 "\$file"
+                        fi
+                    done || echo "No se pueden leer reportes"
                 """
 
                 // Archivar todos los reportes de seguridad
-                archiveArtifacts artifacts: 'security-reports/**/*.json', fingerprint: true, allowEmptyArchive: true
+                archiveArtifacts artifacts: '*.json', fingerprint: true, allowEmptyArchive: true
                 
                 // También archivar archivos importantes del proyecto
                 archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
