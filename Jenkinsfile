@@ -49,7 +49,7 @@ pipeline {
                                 -v "${WORKSPACE_DIR}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                semgrep scan --config auto --json --output semgrep-report.json . || true
+                                semgrep scan --config auto --json --output semgrep-report.json --force-color --no-git-ignore . || true
                         """
 
                         echo "🔍 Escaneando imagen Docker con Trivy..."
@@ -114,29 +114,27 @@ pipeline {
 
                         echo "🕷️ Ejecutando OWASP ZAP baseline scan..."
                         sh """
-                            # Crear directorio ZAP con permisos correctos
-                            mkdir -p security-reports/zap
-                            chmod 755 security-reports/zap
-                            
-                            # Ejecutar ZAP con usuario correcto
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
                                 --network jenkins_jenkins-network \
-                                -v "${WORKSPACE_DIR}/security-reports/zap:/zap/wrk" \
+                                -v "${WORKSPACE_DIR}:/workspace" \
+                                --workdir /workspace \
                                 zaproxy/zap-stable:latest \
-                                sh -c "zap-baseline.py \
+                                zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
-                                    -J /zap/wrk/zap-baseline-report.json \
-                                    -I && \
-                                    chmod 644 /zap/wrk/zap-baseline-report.json" || \
-                                echo "ZAP falló, creando reporte vacío" && \
-                                echo '{"errors":["ZAP failed"}' > security-reports/zap/zap-baseline-report.json
+                                    -r zap-baseline-report.html \
+                                    -x zap-baseline-report.xml \
+                                    -I || true
                         """
 
-                        echo "✅ Verificando reportes ZAP generados..."
+                        // Copiar reportes ZAP y ajustar permisos si es necesario
                         sh """
-                            echo "📊 Reportes ZAP:"
-                            ls -lh security-reports/zap/ || echo "Directorio ZAP vacío"
+                            if [ -f zap-baseline-report.xml ]; then
+                                echo "📄 Reporte ZAP XML generado exitosamente"
+                                ls -lh zap-baseline-report.*
+                            else
+                                echo "⚠️ Reporte ZAP no encontrado"
+                                ls -la . | grep zap || echo "No hay archivos ZAP"
+                            fi
                         """
 
                     } catch (Exception e) {
@@ -161,7 +159,11 @@ pipeline {
                 echo "============================="
                 sh """
                     echo "🔍 Todos los archivos JSON generados:"
-                    ls -lh *.json || echo "No hay reportes"
+                    ls -lh *.json || echo "No hay reportes JSON"
+                    
+                    echo ""
+                    echo "🔍 Reportes ZAP generados:"
+                    ls -lh zap-baseline-report.* || echo "No hay reportes ZAP"
                     
                     echo ""
                     echo "📊 Contenido de reportes (primeras líneas):"
@@ -174,7 +176,7 @@ pipeline {
                 """
 
                 // Archivar todos los reportes de seguridad
-                archiveArtifacts artifacts: '*.json', fingerprint: true, allowEmptyArchive: true
+                archiveArtifacts artifacts: '*.json, zap-baseline-report.*', fingerprint: true, allowEmptyArchive: true
                 
                 // También archivar archivos importantes del proyecto
                 archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
