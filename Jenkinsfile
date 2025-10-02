@@ -137,7 +137,7 @@ pipeline {
                             
                             echo "📄 Verificando Semgrep específicamente:"
                             if [ -f semgrep-report.json ]; then
-                                echo "✅ semgrep-report.json existe ($(wc -c < semgrep-report.json) bytes)"
+                                echo "✅ semgrep-report.json existe (\$(wc -c < semgrep-report.json) bytes)"
                                 echo "📄 Primeras líneas del reporte Semgrep:"
                                 head -3 semgrep-report.json
                             else
@@ -148,14 +148,14 @@ pipeline {
                             
                             echo "📄 Verificando Trivy:"
                             if [ -f trivy-image-report.json ]; then
-                                echo "✅ trivy-image-report.json existe ($(wc -c < trivy-image-report.json) bytes)"
+                                echo "✅ trivy-image-report.json existe (\$(wc -c < trivy-image-report.json) bytes)"
                             else
                                 echo "❌ trivy-image-report.json NO existe"
                             fi
                             
                             echo "📄 Verificando Checkov:"
                             if [ -f checkov-report.json ]; then
-                                echo "✅ checkov-report.json existe ($(wc -c < checkov-report.json) bytes)"
+                                echo "✅ checkov-report.json existe (\$(wc -c < checkov-report.json) bytes)"
                             else
                                 echo "❌ checkov-report.json NO existe"
                             fi
@@ -274,9 +274,9 @@ pipeline {
                     echo ""
                     echo "📊 Contenido de reportes (primeras líneas):"
                     for file in *.json; do
-                        if [ -f "\$file" ]; then
-                            echo "=== \$file ==="
-                            head -3 "\$file"
+                        if [ -f "\\\$file" ]; then
+                            echo "=== \\\$file ==="
+                            head -3 "\\\$file"
                         fi
                     done || echo "No se pueden leer reportes"
                     
