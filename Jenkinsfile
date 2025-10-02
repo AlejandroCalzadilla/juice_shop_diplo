@@ -14,13 +14,13 @@ pipeline {
             steps {
                 script {
                     // Obtener UID y GID reales de Jenkins
-                    sh """
+                    sh '''
                         echo "🔍 Usuario Jenkins info:"
                         id
-                        JENKINS_UID=\$(id -u)
-                        JENKINS_GID=\$(id -g)
-                        echo "Jenkins UID: \$JENKINS_UID, GID: \$JENKINS_GID"
-                    """
+                        JENKINS_UID=$(id -u)
+                        JENKINS_GID=$(id -g)
+                        echo "Jenkins UID: $JENKINS_UID, GID: $JENKINS_GID"
+                    '''
                     
                     // Limpiar contenedores anteriores
                     sh "docker stop juice-shop-running || true"
@@ -46,20 +46,26 @@ pipeline {
             steps {
                 script {
                     try {
+                        // Obtener UID para usar en contenedores
+                        def userInfo = sh(script: 'id -u', returnStdout: true).trim()
+                        def groupInfo = sh(script: 'id -g', returnStdout: true).trim()
+                        
                         echo "🔨 Construyendo imagen Docker..."
                         sh "docker build -t ${IMAGE_NAME}:${IMAGE_TAG} ."
 
                         echo "🔍 Ejecutando SAST con Semgrep..."
                         sh """
                             docker run --rm \
-                                --user \$(id -u):\$(id -g) \
+                                --user ${userInfo}:${groupInfo} \
                                 -v "${WORKSPACE_DIR}:/src" \
                                 --workdir /src \
                                 returntocorp/semgrep:latest \
-                                sh -c "semgrep scan --config auto --json --output security-reports/semgrep-report.json . && \
-                                       chmod 644 security-reports/semgrep-report.json" || \
-                                echo "Semgrep falló, creando reporte vacío" && \
+                                sh -c "semgrep scan --config auto --json --output security-reports/semgrep-report.json . && chmod 644 security-reports/semgrep-report.json" || true
+                            
+                            # Crear reporte vacío si falló
+                            if [ ! -f security-reports/semgrep-report.json ]; then
                                 echo '{"errors":["Semgrep failed"}' > security-reports/semgrep-report.json
+                            fi
                         """
 
                         echo "🔍 Escaneando imagen Docker con Trivy..."
@@ -181,7 +187,7 @@ pipeline {
                     
                     echo ""
                     echo "📊 Contenido de reportes (primeras líneas):"
-                    find security-reports -name "*.json" -exec sh -c 'echo "=== \\$1 ==="; head -3 "\\$1"' _ {} \\; || echo "No se pueden leer reportes"
+                    find security-reports -name "*.json" -exec sh -c 'echo "=== \$1 ==="; head -3 "\$1"' _ {} \\; || echo "No se pueden leer reportes"
                 """
 
                 // Archivar todos los reportes de seguridad
