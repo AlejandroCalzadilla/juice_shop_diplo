@@ -44,6 +44,14 @@ pipeline {
                         
                         echo "📁 Espacio disponible:"
                         df -h "${WORKSPACE}"
+                        
+                        echo "🌐 Verificando conectividad de red..."
+                        ping -c 2 8.8.8.8 || echo "Sin conectividad a Internet"
+                        ping -c 2 github.com || echo "Sin conectividad a GitHub"
+                        
+                        echo "🐳 Verificando Docker..."
+                        docker --version || echo "Docker no disponible"
+                        docker network ls | grep jenkins || echo "Red de Jenkins no encontrada"
                     '''
                     
                     // Limpiar contenedores anteriores
@@ -56,7 +64,47 @@ pipeline {
         
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/AlejandroCalzadilla/juice_shop_diplo.git'
+                script {
+                    try {
+                        echo "🔄 Intentando checkout del repositorio..."
+                        
+                        // Limpiar workspace si es necesario
+                        sh '''
+                            echo "🧹 Limpiando workspace..."
+                            sudo rm -rf .git || true
+                            sudo rm -rf * || true
+                            ls -la
+                        '''
+                        
+                        // Checkout con retry
+                        retry(3) {
+                            git branch: 'main', url: 'https://github.com/AlejandroCalzadilla/juice_shop_diplo.git'
+                        }
+                        
+                        echo "✅ Checkout completado exitosamente"
+                        sh '''
+                            echo "📁 Contenido del workspace después del checkout:"
+                            ls -la
+                            echo "🔍 Verificando archivos importantes:"
+                            ls -la Dockerfile package.json Jenkinsfile || echo "Algunos archivos no encontrados"
+                        '''
+                        
+                    } catch (Exception e) {
+                        echo "❌ Error en checkout: ${e.getMessage()}"
+                        echo "🔧 Intentando checkout alternativo..."
+                        
+                        sh '''
+                            echo "🌐 Verificando conectividad a GitHub..."
+                            ping -c 3 github.com || echo "Sin conectividad a GitHub"
+                            
+                            echo "🔄 Intentando clone manual..."
+                            git clone https://github.com/AlejandroCalzadilla/juice_shop_diplo.git . || echo "Clone manual falló"
+                            
+                            echo "📁 Contenido después del clone manual:"
+                            ls -la
+                        '''
+                    }
+                }
             }
         }
         
@@ -69,6 +117,29 @@ pipeline {
                             umask 000
                             export UMASK=000
                             sudo chmod -R 777 "${WORKSPACE}" || true
+                        '''
+
+                        // Verificar archivos necesarios antes de construir
+                        sh '''
+                            echo "🔍 Verificando archivos necesarios para el build..."
+                            echo "📄 Verificando Dockerfile:"
+                            if [ -f Dockerfile ]; then
+                                echo "✅ Dockerfile encontrado"
+                                head -5 Dockerfile
+                            else
+                                echo "❌ Dockerfile NO encontrado"
+                                ls -la D* || echo "No hay archivos que empiecen con D"
+                            fi
+                            
+                            echo "📄 Verificando package.json:"
+                            if [ -f package.json ]; then
+                                echo "✅ package.json encontrado"
+                            else
+                                echo "❌ package.json NO encontrado"
+                            fi
+                            
+                            echo "📁 Listado completo del workspace:"
+                            ls -la
                         '''
 
                         echo "🔨 Construyendo imagen Docker..."
