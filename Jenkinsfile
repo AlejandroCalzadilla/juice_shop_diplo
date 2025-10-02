@@ -254,11 +254,11 @@ pipeline {
                     
                     echo "🔍 Verificación final de archivos:"
                     echo "Archivos JSON:"
-                    find . -name "*.json" -type f -exec ls -la {} \; || echo "No hay archivos JSON"
+                    find . -name "*.json" -type f -exec ls -la {} \\; || echo "No hay archivos JSON"
                     echo "Archivos XML:"
-                    find . -name "*.xml" -type f -exec ls -la {} \; || echo "No hay archivos XML"  
+                    find . -name "*.xml" -type f -exec ls -la {} \\; || echo "No hay archivos XML"  
                     echo "Archivos HTML:"
-                    find . -name "*.html" -type f -exec ls -la {} \; || echo "No hay archivos HTML"
+                    find . -name "*.html" -type f -exec ls -la {} \\; || echo "No hay archivos HTML"
                 """
 
                 echo "📋 RESUMEN FINAL DE REPORTES:"
@@ -274,9 +274,9 @@ pipeline {
                     echo ""
                     echo "📊 Contenido de reportes (primeras líneas):"
                     for file in *.json; do
-                        if [ -f "\\\$file" ]; then
-                            echo "=== \\\$file ==="
-                            head -3 "\\\$file"
+                        if [ -f "\$file" ]; then
+                            echo "=== \$file ==="
+                            head -3 "\$file"
                         fi
                     done || echo "No se pueden leer reportes"
                     
