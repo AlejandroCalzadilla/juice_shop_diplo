@@ -1,23 +1,30 @@
 pipeline {
     agent any
-    options {
-        skipDefaultCheckout()  // ← Agregar esto
-    }
     
     environment {
         IMAGE_NAME = "juice-shop"
         IMAGE_TAG = "latest"
         WORKSPACE_DIR = "${WORKSPACE}"
+        JENKINS_UID = "1000"
+        JENKINS_GID = "1000"
     }
     
     stages {
         stage('Preparación') {
             steps {
                 script {
+                    // Obtener UID y GID reales de Jenkins
+                    sh '''
+                        echo "🔍 Usuario Jenkins info:"
+                        id
+                        JENKINS_UID=$(id -u)
+                        JENKINS_GID=$(id -g)
+                        echo "Jenkins UID: $JENKINS_UID, GID: $JENKINS_GID"
+                    '''
+                    
                     // Limpiar contenedores anteriores
                     sh "docker stop juice-shop-running || true"
                     sh "docker rm juice-shop-running || true"
-                    // Limpiar imágenes anteriores
                     sh "docker rmi ${IMAGE_NAME}:${IMAGE_TAG} || true"
                 }
             }
@@ -25,7 +32,7 @@ pipeline {
         
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/juice-shop/juice-shop.git'
+                git branch: 'main', url: 'https://github.com/AlejandroCalzadilla/juice_shop_diplo.git'
             }
         }
         
@@ -50,9 +57,9 @@ pipeline {
                             docker run --rm \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 -v "${WORKSPACE_DIR}:/workspace" \
+                                --workdir /workspace \
                                 aquasec/trivy:latest \
-                                trivy image --timeout 10m -f json -o trivy-image-report.json \
-                                ${IMAGE_NAME}:${IMAGE_TAG} || true
+                                image --format json ${IMAGE_NAME}:${IMAGE_TAG} > trivy-image-report.json || true
                         """
 
                         echo "🔍 Ejecutando análisis de configuración con Checkov..."
@@ -61,7 +68,7 @@ pipeline {
                                 -v "${WORKSPACE_DIR}:/workspace" \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
-                                checkov --directory . --framework dockerfile -o json --output-file-path . \
+                                --directory . --framework dockerfile -o json --output-file-path . \
                                 --soft-fail || true
                         """
 
@@ -109,18 +116,26 @@ pipeline {
                         sh """
                             docker run --rm \
                                 --network jenkins_jenkins-network \
-                                -v "${WORKSPACE_DIR}:/zap/wrk" \
+                                -v "${WORKSPACE_DIR}:/workspace" \
+                                --workdir /workspace \
                                 zaproxy/zap-stable:latest \
                                 zap-baseline.py \
                                     -t http://juice-shop-running:3000 \
                                     -r zap-baseline-report.html \
-                                    -J zap-baseline-report.json \
-                                    -w zap-baseline-report.md \
+                                    -x zap-baseline-report.xml \
                                     -I || true
                         """
 
-                        echo "✅ Verificando reportes ZAP generados..."
-                        sh "ls -lh zap-baseline-report.*"
+                        // Copiar reportes ZAP y ajustar permisos si es necesario
+                        sh """
+                            if [ -f zap-baseline-report.xml ]; then
+                                echo "📄 Reporte ZAP XML generado exitosamente"
+                                ls -lh zap-baseline-report.*
+                            else
+                                echo "⚠️ Reporte ZAP no encontrado"
+                                ls -la . | grep zap || echo "No hay archivos ZAP"
+                            fi
+                        """
 
                     } catch (Exception e) {
                         echo "⚠️ DAST falló: ${e.getMessage()}"
@@ -140,14 +155,31 @@ pipeline {
                 sh "docker stop juice-shop-running || true"
                 sh "docker rm juice-shop-running || true"
 
-                echo "📋 RESUMEN DE REPORTES GENERADOS:"
-                echo "=================================="
-                sh "ls -lh *.json || echo 'No hay reportes JSON'"
-                sh "ls -lh zap-baseline-report.* || echo 'No hay reportes ZAP'"
+                echo "📋 RESUMEN FINAL DE REPORTES:"
+                echo "============================="
+                sh """
+                    echo "🔍 Todos los archivos JSON generados:"
+                    ls -lh *.json || echo "No hay reportes JSON"
+                    
+                    echo ""
+                    echo "🔍 Reportes ZAP generados:"
+                    ls -lh zap-baseline-report.* || echo "No hay reportes ZAP"
+                    
+                    echo ""
+                    echo "📊 Contenido de reportes (primeras líneas):"
+                    for file in *.json; do
+                        if [ -f "\$file" ]; then
+                            echo "=== \$file ==="
+                            head -3 "\$file"
+                        fi
+                    done || echo "No se pueden leer reportes"
+                """
 
-                // Archivar todos los reportes JSON y ZAP
-                archiveArtifacts artifacts: '*.json', fingerprint: true, allowEmptyArchive: true
-                archiveArtifacts artifacts: 'zap-baseline-report.*', fingerprint: true, allowEmptyArchive: true
+                // Archivar todos los reportes de seguridad
+                archiveArtifacts artifacts: '*.json, zap-baseline-report.*', fingerprint: true, allowEmptyArchive: true
+                
+                // También archivar archivos importantes del proyecto
+                archiveArtifacts artifacts: 'Dockerfile, package.json, *.md', fingerprint: true, allowEmptyArchive: true
             }
         }
         success {
