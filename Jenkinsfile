@@ -22,7 +22,7 @@ pipeline {
         
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/AlejandroCalzadilla/juice_shop_diplo.git'
+                git branch: 'main', url: 'https://github.com/juice-shop/juice-shop.git'
             }
         }
         
@@ -47,9 +47,9 @@ pipeline {
                             docker run --rm \
                                 -v /var/run/docker.sock:/var/run/docker.sock \
                                 -v "${WORKSPACE_DIR}:/workspace" \
-                                --workdir /workspace \
                                 aquasec/trivy:latest \
-                                image --format json ${IMAGE_NAME}:${IMAGE_TAG} > trivy-image-report.json || true
+                                trivy image --timeout 10m -f json -o trivy-image-report.json \
+                                ${IMAGE_NAME}:${IMAGE_TAG} || true
                         """
 
                         echo "🔍 Ejecutando análisis de configuración con Checkov..."
@@ -58,7 +58,7 @@ pipeline {
                                 -v "${WORKSPACE_DIR}:/workspace" \
                                 --workdir /workspace \
                                 bridgecrew/checkov:latest \
-                                --directory . --framework dockerfile -o json --output-file-path . \
+                                checkov --directory . --framework dockerfile -o json --output-file-path . \
                                 --soft-fail || true
                         """
 
